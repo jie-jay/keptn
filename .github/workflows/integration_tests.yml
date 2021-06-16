@@ -1013,7 +1013,7 @@ jobs:
   deploy_keptn_with_keptn:
     name: Deploy Keptn with Keptn
     needs: integration-test
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-20.04
     env:
       BRANCH: ${{ needs.integration-test.outputs.BRANCH }}
