@@ -52,6 +52,15 @@ jobs:
             RUN_QUALITY_GATES_TEST: "true"
             RUN_CONTINUOUS_DELIVERY_TEST: "false"
             COLLECT_RESOURCE_LIMITS: "false"
+          - CLOUD_PROVIDER: "k3s-on-GHA-airgapped"
+            VERSION: "v1.21.1+k3s1" # see https://github.com/rancher/k3s/releases
+            KUBECONFIG: "/etc/rancher/k3s/k3s.yaml"
+            PLATFORM: "kubernetes"
+            KEPTN_SERVICE_TYPE: "NodePort"
+            RUN_AIRGAPPED_TEST: "true"
+            RUN_QUALITY_GATES_TEST: "false"
+            RUN_CONTINUOUS_DELIVERY_TEST: "false"
+            COLLECT_RESOURCE_LIMITS: "false"
           - CLOUD_PROVIDER: "GKE"
             VERSION: "1.17"
             KUBECONFIG: ""
@@ -78,6 +87,7 @@ jobs:
       KEPTN_NAMESPACE: "keptn-test"
       KEPTN_SERVICE_TYPE: ${{ matrix.KEPTN_SERVICE_TYPE }}
       RUN_CONTINUOUS_DELIVERY_TEST: ${{ matrix.RUN_CONTINUOUS_DELIVERY_TEST }}
+      RUN_AIRGAPPED_TEST: ${{ matrix.RUN_AIRGAPPED_TEST }}
       REMOTE_EXECUTION_PLANE: ${{ matrix.REMOTE_EXECUTION_PLANE }}
       RUN_QUALITY_GATES_TEST: ${{ matrix.RUN_QUALITY_GATES_TEST }}
       KEPTN_EXAMPLES_BRANCH: ${{ github.event.inputs.examples_branch }}
@@ -142,7 +152,7 @@ jobs:
         run: oc cluster status
 
       - name: Install and start K3s
-        if: env.CLOUD_PROVIDER == 'k3s-on-GHA'
+        if: env.CLOUD_PROVIDER == 'k3s-on-GHA' || env.CLOUD_PROVIDER == 'k3s-on-GHA-airgapped'
         env:
           K3S_VERSION: ${{ matrix.VERSION }}
         run: |
@@ -245,33 +255,25 @@ jobs:
       - name: Host helm chart via python http server
         run: cd dist/keptn-installer/ && python3 -m http.server &
 
-      - name: Install Keptn
-        id: keptn_install
+      - name: Pull images Airgapped
+        id: airgapped_pull_images
+        if: env.RUN_AIRGAPPED_TEST == 'true'
         timeout-minutes: 10
+        run: |
+          # ToDo: Decide where to push images to (e.g., local harbor?)
+          installer/airgapped/pull_and_retag_images.sh "docker.io/some-registry/"
+          # block all traffic to the outside
+          iptables -A OUTPUT -p tcp -j DROP
+
+      - name: Install Keptn Airgapped
+        id: airgapped_keptn_install
+        timeout-minutes: 10
+        if: env.RUN_AIRGAPPED_TEST == 'true'
         env:
           HELM_CHART_NAME: ${{ steps.extract_helm_chart_name.outputs.HELM_CHART_NAME }}
-        run: |
-          echo "Installing Keptn on cluster"
-
-          if [[ $PLATFORM == "openshift" ]]; then
-            echo "{
-              \"openshiftUrl\": \"https://127.0.0.1:8443\",
-              \"openshiftUser\": \"admin\",
-              \"openshiftPassword\": \"admin\"
-            }" > creds.json
-          else
-            echo "{}" > creds.json # empty credentials file
-          fi
-
-          # Determine use case
-          USE_CASE=""
-          if [[ $RUN_CONTINUOUS_DELIVERY_TEST == "true" ]]; then
-            USE_CASE="--use-case=continuous-delivery"
-          fi
-
-          # Install Keptn
-          keptn install --platform=${PLATFORM} --namespace=${KEPTN_NAMESPACE} --endpoint-service-type=${KEPTN_SERVICE_TYPE} \
-             --chart-repo=http://0.0.0.0:8000/${HELM_CHART_NAME} --creds=creds.json --verbose $USE_CASE
+          HELM_SERVICE_HELM_CHART_NAME: ${{ steps.extract_helm_chart_name.outputs.HELM_SERVICE_HELM_CHART_NAME }}
+          JMETER_SERVICE_HELM_CHART_NAME: ${{ steps.extract_helm_chart_name.outputs.JMETER_SERVICE_HELM_CHART_NAME }}
+        run: installer/airgapped/install_keptn.sh "docker.io/some-registry/" "$HELM_CHART_NAME" "$HELM_SERVICE_HELM_CHART_NAME" "$JMETER_SERVICE_HELM_CHART_NAME"
 
       # Gather resource limits directly after installation of Keptn
       - name: Gather resource limits
